@@ -4,6 +4,7 @@ import csv
 import json
 import os
 import pickle
+import pathlib
 import signal
 import sys
 import time
@@ -12,11 +13,12 @@ from datetime import datetime, timezone
 import paho.mqtt.client as mqtt
 
 
-MSG_TYPE_MAP = {
-    "qos0": 0,
-    "qos1": 1,
-    "connect": 2,
-}
+ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from MQTT_RL import DummyModel, RLenv
+
 
 ACTION_DECLINE = 0
 ACTION_ACCEPT = 1
@@ -33,6 +35,8 @@ class MQTTSecRuntime:
     def __init__(self, args):
         self.args = args
         self.model = self._load_model(args.model_path) if args.model_path else None
+        policy_model = self.model if self.model is not None else DummyModel()
+        self.rl_env = RLenv(policy_model, num_clients=1)
         self.last_seen = {}
         self.running = True
 
@@ -76,6 +80,7 @@ class MQTTSecRuntime:
                     "timedelta",
                     "window_size",
                     "msg_type",
+                    "ml_state",
                     "rule_action",
                     "model_action",
                     "final_action",
@@ -121,30 +126,20 @@ class MQTTSecRuntime:
         return now - prev
 
     def rule_action(self, msg_type, timedelta_s, window_size):
-        threshold1 = self.args.threshold1
-        threshold2 = self.args.threshold2
-
-        if msg_type == "qos0":
-            return ACTION_ACCEPT if timedelta_s < threshold1 else ACTION_DECLINE
-
-        if msg_type in ("qos1", "connect"):
-            combined = timedelta_s + window_size
-            if combined < threshold1:
-                return ACTION_ACCEPT
-            if threshold1 <= combined <= threshold2:
-                return ACTION_WARN
-            return ACTION_DECLINE
-
-        return ACTION_DECLINE
+        return int(
+            self.rl_env.check_msg_type(
+                msg_type,
+                timedelta_s,
+                threshold1=self.args.threshold1,
+                window_size=window_size,
+            )
+        )
 
     def model_action(self, timedelta_s, msg_type, window_size):
         if self.model is None:
             return None
 
-        msg_id = MSG_TYPE_MAP.get(msg_type, -1)
-        features = [[timedelta_s, msg_id, window_size]]
-        pred = self.model.predict(features)
-        value = int(pred[0])
+        value = int(self.rl_env.get_state(timedelta_s, msg_type, window_size))
 
         if value not in (ACTION_DECLINE, ACTION_ACCEPT, ACTION_WARN):
             return ACTION_DECLINE
@@ -198,6 +193,7 @@ class MQTTSecRuntime:
         window_size = float(payload.get("window_size", self.args.default_window_size))
         timedelta_s = float(payload.get("timedelta", self.compute_timedelta(source_id, msg.topic)))
 
+        ml_state = int(self.rl_env.get_state(timedelta_s, msg_type, window_size))
         rule_a = self.rule_action(msg_type, timedelta_s, window_size)
         model_a = self.model_action(timedelta_s, msg_type, window_size)
         final_a = self.combine_actions(rule_a, model_a)
@@ -217,6 +213,7 @@ class MQTTSecRuntime:
             "timedelta": round(timedelta_s, 6),
             "window_size": window_size,
             "msg_type": msg_type,
+            "ml_state": ml_state,
             "rule_action": ACTION_NAME[rule_a],
             "model_action": ACTION_NAME[model_a] if model_a is not None else "none",
             "final_action": ACTION_NAME[final_a],
@@ -236,6 +233,7 @@ class MQTTSecRuntime:
                 decision_event["timedelta"],
                 window_size,
                 msg_type,
+                ml_state,
                 decision_event["rule_action"],
                 decision_event["model_action"],
                 decision_event["final_action"],
@@ -282,7 +280,6 @@ def parse_args():
     p.add_argument("--pub-qos", type=int, default=1)
 
     p.add_argument("--threshold1", type=float, default=5.0)
-    p.add_argument("--threshold2", type=float, default=8.0)
     p.add_argument("--default-window-size", type=float, default=2.0)
     p.add_argument("--first-msg-timedelta", type=float, default=0.0)
 

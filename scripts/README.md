@@ -15,6 +15,8 @@ This folder contains a complete test harness for your 3-device setup:
 - `evaluate_logs.py`: confusion-matrix style metrics from CSV logs
 - `requirements.txt`: Python dependencies
 
+Runtime policy and state extraction are aligned with `RLenv` in `MQTT_RL.py`.
+
 ## 1) Install dependencies on each Pi
 
 ```bash
@@ -44,7 +46,6 @@ python3 mqttsec_runtime.py \
   --decision-topic mqttsec/decision \
   --mode rule \
   --threshold1 5 \
-  --threshold2 8 \
   --republish-warn \
   --log-file mqttsec_decisions.csv
 ```
