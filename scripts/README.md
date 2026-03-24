@@ -1,6 +1,6 @@
 # MQTTSec Raspberry Pi Test Scripts
 
-This folder contains a complete test harness for your 3-device setup:
+This folder contains a complete test harness for a 3-device setup:
 
 - RPi5: broker + MQTTSec runtime
 - RPi4-A: normal publisher
