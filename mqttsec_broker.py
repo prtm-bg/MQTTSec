@@ -21,9 +21,7 @@ import matplotlib.pyplot as plt
 import paho.mqtt.client as mqtt
 from sklearn.ensemble import RandomForestClassifier
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  PAPER TABLE 2 — CONSTANTS
-# ═══════════════════════════════════════════════════════════════════════════
+# PAPER TABLE 2 - CONSTANTS
 THETA1_MIN   = 8       # bytes  — min safe payload length
 THETA1_MAX   = 650     # bytes  — max safe payload length
 THETA2_MIN   = 5.0     # ms     — min safe time delta
@@ -49,9 +47,7 @@ RESULTS_FILE = "mqttsec_results.txt"
 EPISODE_WINDOW_SEC = 2.0
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  RF MODEL WRAPPER
-# ═══════════════════════════════════════════════════════════════════════════
+# RF MODEL WRAPPER
 class RFModel:
     """
     Wraps the trained RandomForest.
@@ -126,9 +122,7 @@ class RFModel:
         return self.last_error
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  RL ENVIRONMENT  (complete — author's code + all fixes)
-# ═══════════════════════════════════════════════════════════════════════════
+# RL ENVIRONMENT (complete - author's code + all fixes)
 class RLenv:
     """
     Full MQTTSec RL environment.
@@ -175,13 +169,13 @@ class RLenv:
         self.epoch_error_history   = []
         self.suspension_history    = {}   # epoch → list of suspended client IDs
 
-    # ── STATE ───────────────────────────────────────────────────────────────
+    # STATE
 
     def get_state(self, payload_len, timedelta_ms):
         """RF classifies traffic → 0 (benign) or 1 (attack)"""
         return self.model.predict(payload_len, timedelta_ms)
 
-    # ── EPISODE-LEVEL POLICY  (Equations 5 and 6) ──────────────────────────
+    # EPISODE-LEVEL POLICY (Equations 5 and 6)
 
     def check_msg_type(self, msg_type, timedelta_ms, payload_len, ml_state=0):
         """
@@ -220,7 +214,7 @@ class RLenv:
 
         return self.send_message_decline()
 
-    # ── REWARD SIGNALS ──────────────────────────────────────────────────────
+    # REWARD SIGNALS
 
     def send_message_accept(self):  return 1
     def send_message_warn(self):    return 2
@@ -234,19 +228,19 @@ class RLenv:
             rewards.append(a)   # reward == action value (1, 2, or 0)
         return rewards
 
-    # ── DISCOUNTED RETURN  (Equation 10) ───────────────────────────────────
+    # DISCOUNTED RETURN (Equation 10)
 
     def compute_discounted_return(self, rewards):
         return sum((self.gamma ** k) * r for k, r in enumerate(rewards))
 
-    # ── EPSILON UPDATE  (Equation 12) ──────────────────────────────────────
+    # EPSILON UPDATE (Equation 12)
 
     def update_epsilon(self, classification_error):
-        """ε = εr + Υn/2   (Eq. 12)"""
+        """ε = εr + Yn/2   (Eq. 12)"""
         self.epsilon = self.epsilon_r + classification_error / 2.0
         self.epsilon = min(self.epsilon, 1.0)
 
-    # ── EPOCH-LEVEL ACTION  (Equation 9 + Equation 11) ─────────────────────
+    # EPOCH-LEVEL ACTION (Equation 9 + Equation 11)
 
     def epoch_action(self, client_id, G):
         """
@@ -265,7 +259,7 @@ class RLenv:
               f"(G={G:.3f}, τ={self.tau_epoch}, ε={self.epsilon:.3f})")
         return decision == 'Continue'
 
-    # ── SUSPENSION MANAGEMENT ───────────────────────────────────────────────
+    # SUSPENSION MANAGEMENT
 
     def suspend_client(self, client_id):
         self.reward_buffer[client_id] = []
@@ -287,7 +281,7 @@ class RLenv:
     def is_suspended(self, client_id):
         return client_id in self.suspended
 
-    # ── EPISODE LOOP ────────────────────────────────────────────────────────
+    # EPISODE LOOP
 
     def run_episode(self, clients):
         """
@@ -318,19 +312,19 @@ class RLenv:
                 print(f"    Client {cid:2d} SUSPENDED — skipped.")
                 continue
 
-            # ── Get ML state from RF ────────────────────────────────────
+            # Get ML state from RF
             ml_state = self.get_state(plen, td_ms)
             ml_label = "ATTACK" if ml_state == 1 else "benign"
 
             print(f"    Client {cid:2d} | {msg_type:8s} | "
                   f"len={plen:5d}B | td={td_ms:7.1f}ms | RF={ml_label}")
 
-            # ── Accumulate for error calculation and retraining ─────────
+            # Accumulate for error calculation and retraining
             episode_feats.append([float(plen), float(td_ms)])
             episode_labels.append(true_label)
             self.traffic_buffer.append(([float(plen), float(td_ms)], true_label))
 
-            # ── Apply episode-level policy ──────────────────────────────
+            # Apply episode-level policy
             action = self.check_msg_type(msg_type, td_ms, plen, ml_state=ml_state)
             actions.append(action)
             active_ids.append(cid)
@@ -342,7 +336,7 @@ class RLenv:
             self.reward_buffer[cid].append(r)
             self.return1[cid] += r
 
-        # ── Update classification error from real RF (author instruction 1) ──
+        # Update classification error from real RF (author instruction 1)
         if episode_feats:
             self.last_classification_error = self.model.compute_error(
                 episode_feats, episode_labels
@@ -352,7 +346,7 @@ class RLenv:
 
         self.episode_count += 1
 
-        # ── Check epoch boundary ────────────────────────────────────────
+        # Check epoch boundary
         epoch_results = None
         if self.episode_count >= self.episodes_per_epoch:
             epoch_results = self._run_epoch_evaluation(clients)
@@ -360,7 +354,7 @@ class RLenv:
 
         return rewards, epoch_results
 
-    # ── EPOCH EVALUATION ────────────────────────────────────────────────────
+    # EPOCH EVALUATION
 
     def _run_epoch_evaluation(self, clients):
         """
@@ -378,7 +372,7 @@ class RLenv:
               f"{self.last_classification_error:.4f}")
         print(f"  {'#'*55}")
 
-        # ── Author instruction 3: retrain every 15 epochs ─────────────
+        # Author instruction 3: retrain every 15 epochs
         if self.epoch_count % RETRAIN_INT == 0:
             print(f"\n  [RETRAIN] Epoch {self.epoch_count} "
                   f"— retraining RF on {len(self.traffic_buffer)} samples...")
@@ -386,7 +380,7 @@ class RLenv:
             self.last_classification_error = new_error
             self.traffic_buffer = []   # clear buffer after retraining
 
-        # ── Update epsilon (Eq.12) ─────────────────────────────────────
+        # Update epsilon (Eq.12)
         self.update_epsilon(self.last_classification_error)
         print(f"\n  Updated ε = {self.epsilon:.4f}  "
               f"(εr={self.epsilon_r}, err={self.last_classification_error:.4f})")
@@ -434,9 +428,7 @@ class RLenv:
         return epoch_results
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  MQTT MONITOR
-# ═══════════════════════════════════════════════════════════════════════════
+# MQTT MONITOR
 class MQTTSecMonitor:
     """
     Subscribes to all MQTT traffic on the broker.
@@ -480,7 +472,7 @@ class MQTTSecMonitor:
         self.mqtt_client.on_connect = self._on_connect
         self.mqtt_client.on_message = self._on_message
 
-    # ── Mosquitto callbacks ─────────────────────────────────────────────────
+    # Mosquitto callbacks
 
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
         if int(reason_code) == 0:
@@ -535,7 +527,7 @@ class MQTTSecMonitor:
                 'true_label':   true_label
             }
 
-    # ── Episode loop — runs in a background thread ──────────────────────────
+    # Episode loop - runs in a background thread
 
     def _episode_loop(self):
         """
@@ -593,7 +585,7 @@ class MQTTSecMonitor:
                 self.running = False
                 break
 
-    # ── Plotting ────────────────────────────────────────────────────────────
+    # Plotting
 
     def _save_plots(self):
         epochs = list(range(1, len(self.rl_env.epoch_epsilon_history) + 1))
@@ -622,7 +614,7 @@ class MQTTSecMonitor:
         plt.savefig('mqttsec_progress.png', dpi=150)
         plt.close(fig)
 
-    # ── Start / stop ─────────────────────────────────────────────────────────
+    # Start / stop
 
     def start(self):
         try:
@@ -677,9 +669,7 @@ class MQTTSecMonitor:
         print("[Monitor] Plots saved → mqttsec_progress.png")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  MAIN
-# ═══════════════════════════════════════════════════════════════════════════
+# MAIN
 if __name__ == '__main__':
     random.seed(42)
     np.random.seed(42)

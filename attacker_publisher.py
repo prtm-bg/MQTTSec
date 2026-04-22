@@ -19,7 +19,7 @@ import json
 import argparse
 import socket
 
-# ── Configuration ──────────────────────────────────────────────────────────
+# Configuration
 ATTACK_CLIENT_IDS = list(range(10, 15))   # clients 10-14 are attackers
 
 # Attack parameters — all designed to violate paper thresholds

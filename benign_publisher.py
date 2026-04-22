@@ -16,7 +16,7 @@ import json
 import argparse
 import socket
 
-# ── Configuration ──────────────────────────────────────────────────────────
+# Configuration
 BENIGN_CLIENT_IDS = list(range(0, 10))   # clients 0-9 are benign
 
 # Safe parameter ranges (stay inside paper's θ thresholds)
