@@ -14,6 +14,7 @@ import time
 import random
 import json
 import argparse
+import socket
 
 # ── Configuration ──────────────────────────────────────────────────────────
 BENIGN_CLIENT_IDS = list(range(0, 10))   # clients 0-9 are benign
@@ -39,6 +40,20 @@ MSG_TYPE_MAP = {
 }
 
 
+def create_mqtt_client(client_id):
+    """
+    Use callback API v2 when available to avoid deprecation warnings,
+    while staying compatible with older paho-mqtt releases.
+    """
+    try:
+        return mqtt.Client(
+            client_id=client_id,
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION2
+        )
+    except (AttributeError, TypeError):
+        return mqtt.Client(client_id=client_id)
+
+
 def make_payload(cid, target_bytes, is_attack=0):
     """
     Build a JSON payload whose total encoded length is ~target_bytes.
@@ -54,8 +69,20 @@ def make_payload(cid, target_bytes, is_attack=0):
 
 
 def run_benign_publisher(broker_ip, broker_port=1883):
-    client = mqtt.Client(client_id="benign_publisher_rpi4_1")
-    client.connect(broker_ip, broker_port, keepalive=60)
+    client = create_mqtt_client("benign_publisher_rpi4_1")
+    try:
+        client.connect(broker_ip, broker_port, keepalive=60)
+    except ConnectionRefusedError:
+        print(f"[Benign] Connection refused by {broker_ip}:{broker_port}")
+        print("[Benign] Ensure Mosquitto is running and listening on 1883.")
+        return
+    except socket.gaierror as e:
+        print(f"[Benign] Invalid broker address '{broker_ip}': {e}")
+        return
+    except OSError as e:
+        print(f"[Benign] Could not connect to {broker_ip}:{broker_port} ({e})")
+        return
+
     client.loop_start()
     print(f"[Benign] Connected to {broker_ip}:{broker_port}")
     print(f"[Benign] Simulating clients {BENIGN_CLIENT_IDS}")

@@ -469,19 +469,26 @@ class MQTTSecMonitor:
             'episode', 'epoch'
         ])
 
-        self.mqtt_client = mqtt.Client(client_id="mqttsec_monitor")
+        try:
+            self.mqtt_client = mqtt.Client(
+                client_id="mqttsec_monitor",
+                callback_api_version=mqtt.CallbackAPIVersion.VERSION2
+            )
+        except (AttributeError, TypeError):
+            self.mqtt_client = mqtt.Client(client_id="mqttsec_monitor")
+
         self.mqtt_client.on_connect = self._on_connect
         self.mqtt_client.on_message = self._on_message
 
     # ── Mosquitto callbacks ─────────────────────────────────────────────────
 
-    def _on_connect(self, client, userdata, flags, rc):
-        if rc == 0:
+    def _on_connect(self, client, userdata, flags, reason_code, properties=None):
+        if int(reason_code) == 0:
             print(f"[Monitor] Connected to Mosquitto at {BROKER_IP}:{BROKER_PORT}")
             client.subscribe("mqttsec/#")
             print("[Monitor] Subscribed to mqttsec/#")
         else:
-            print(f"[Monitor] Connection failed, rc={rc}")
+            print(f"[Monitor] Connection failed, rc={reason_code}")
 
     def _on_message(self, client, userdata, msg):
         now   = time.time()
@@ -618,7 +625,13 @@ class MQTTSecMonitor:
     # ── Start / stop ─────────────────────────────────────────────────────────
 
     def start(self):
-        self.mqtt_client.connect(BROKER_IP, BROKER_PORT, keepalive=60)
+        try:
+            self.mqtt_client.connect(BROKER_IP, BROKER_PORT, keepalive=60)
+        except OSError as e:
+            print(f"[Monitor] Could not connect to {BROKER_IP}:{BROKER_PORT} ({e})")
+            self.running = False
+            self.log_fh.close()
+            return
 
         ep_thread = threading.Thread(
             target=self._episode_loop, daemon=True, name="EpisodeLoop"

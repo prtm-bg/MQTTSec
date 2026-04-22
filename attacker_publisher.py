@@ -17,6 +17,7 @@ import time
 import random
 import json
 import argparse
+import socket
 
 # ── Configuration ──────────────────────────────────────────────────────────
 ATTACK_CLIENT_IDS = list(range(10, 15))   # clients 10-14 are attackers
@@ -49,6 +50,20 @@ ATTACK_TYPE_MAP = {
 }
 
 
+def create_mqtt_client(client_id):
+    """
+    Use callback API v2 when available to avoid deprecation warnings,
+    while staying compatible with older paho-mqtt releases.
+    """
+    try:
+        return mqtt.Client(
+            client_id=client_id,
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION2
+        )
+    except (AttributeError, TypeError):
+        return mqtt.Client(client_id=client_id)
+
+
 def make_payload(cid, target_bytes, is_attack=1):
     """
     Build a JSON payload whose total encoded length is ~target_bytes.
@@ -63,8 +78,20 @@ def make_payload(cid, target_bytes, is_attack=1):
 
 
 def run_attacker_publisher(broker_ip, broker_port=1883):
-    client = mqtt.Client(client_id="attacker_publisher_rpi4_2")
-    client.connect(broker_ip, broker_port, keepalive=60)
+    client = create_mqtt_client("attacker_publisher_rpi4_2")
+    try:
+        client.connect(broker_ip, broker_port, keepalive=60)
+    except ConnectionRefusedError:
+        print(f"[Attacker] Connection refused by {broker_ip}:{broker_port}")
+        print("[Attacker] Ensure Mosquitto is running and listening on 1883.")
+        return
+    except socket.gaierror as e:
+        print(f"[Attacker] Invalid broker address '{broker_ip}': {e}")
+        return
+    except OSError as e:
+        print(f"[Attacker] Could not connect to {broker_ip}:{broker_port} ({e})")
+        return
+
     client.loop_start()
     print(f"[Attacker] Connected to {broker_ip}:{broker_port}")
     print(f"[Attacker] Simulating attack clients {ATTACK_CLIENT_IDS}")
