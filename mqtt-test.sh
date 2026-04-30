@@ -21,7 +21,7 @@ cleanup() {
 }
 
 # Catch Ctrl+C and kill background processes cleanly
-trap cleanup SIGINT SIGTERM
+trap cleanup INT TERM
 
 # 1. Start the broker
 echo "[1/3] Starting MQTT Broker..."

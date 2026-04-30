@@ -475,7 +475,8 @@ class MQTTSecMonitor:
     # Mosquitto callbacks
 
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
-        if int(reason_code) == 0:
+        rc = getattr(reason_code, 'value', reason_code)
+        if int(rc) == 0:
             print(f"[Monitor] Connected to Mosquitto at {BROKER_IP}:{BROKER_PORT}")
             client.subscribe("mqttsec/#")
             print("[Monitor] Subscribed to mqttsec/#")
