@@ -32,8 +32,8 @@ TAU_EPOCH    = 18.0    # return threshold for epoch-level decision (Eq.9)
 EPSILON_R    = 0.1     # residual epsilon (Table 2)
 GAMMA        = 0.9     # discount factor (Eq.10)
 N_EPISODES   = 10      # episodes per epoch (Table 2)
-N_EPOCHS     = 60      # total epochs to run (author instruction)
-RETRAIN_INT  = 15      # epochs between ML retraining (Table 2 / author)
+N_EPOCHS     = 300     # total epochs to run (author instruction)
+RETRAIN_INT  = 60      # epochs between ML retraining (Table 2 / author)
 BAN_DURATION = 2       # suspension duration in epochs (Δ)
 NUM_CLIENTS  = 15      # 10 benign + 5 attacker
 
