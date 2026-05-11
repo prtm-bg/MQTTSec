@@ -104,10 +104,17 @@ class RFModel:
         X = np.array([t[0] for t in traffic_buffer], dtype=np.float32)
         y = np.array([t[1] for t in traffic_buffer], dtype=int)
 
-        # 80/20 split — paper Section 6.3
-        split      = int(0.8 * len(X))
-        X_tr, X_te = X[:split], X[split:]
-        y_tr, y_te = y[:split], y[split:]
+        # Fix: Enable warm_start and add estimators to blend new knowledge without wiping old trees
+        self.rf.warm_start = True
+        self.rf.n_estimators += 10
+        
+        # 80/20 split — paper Section 6.3 - Adding shuffle to prevent consecutive identical labels
+        from sklearn.model_selection import train_test_split
+        # Using a fallback to standard split if only one class exists
+        try:
+            X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+        except ValueError:
+            X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
 
         self.rf.fit(X_tr, y_tr)
         y_pred      = self.rf.predict(X_te)
