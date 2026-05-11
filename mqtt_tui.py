@@ -12,8 +12,7 @@ import os
 import sys
 
 BROKER_CMD = ["python3", "-u", "mqttsec_broker.py"]
-BENIGN_CMD = ["python3", "-u", "benign_publisher.py", "--broker", "127.0.0.1"]
-ATTACK_CMD = ["python3", "-u", "attacker_publisher.py", "--broker", "127.0.0.1"]
+DYN_PUB_CMD = ["python3", "-u", "dynamic_publisher.py", "--broker", "127.0.0.1"]
 
 class MQTTSecTUI:
     def __init__(self, stdscr):
@@ -21,7 +20,7 @@ class MQTTSecTUI:
         self.q = queue.Queue()
         
         self.epoch = 0
-        self.max_epochs = 300
+        self.max_epochs = 60
         self.episode = 0
         self.max_episodes = 10
         self.last_err = 0.0
@@ -34,7 +33,7 @@ class MQTTSecTUI:
         self.processes = []
         self.logs = []
         self.max_log_lines = 15
-        self.clients = {i: "OK" for i in range(15)} # 0-9 benign, 10-14 attack
+        self.clients = {i: {"status": "OK", "role": "Benign"} for i in range(15)} # dynamic
         self.running = True
         
         # Init curses
@@ -58,7 +57,7 @@ class MQTTSecTUI:
                 
     def start_processes(self):
         # Auto-detect folder paths based on local macOS or Ubuntu SSH layout
-        if os.path.exists("mqttsec_broker.py") and os.path.exists("benign_publisher.py"):
+        if os.path.exists("mqttsec_broker.py"):
             broker_dir = "."
             pub_dir = "."
         else:
@@ -72,11 +71,8 @@ class MQTTSecTUI:
             
             time.sleep(2) # Give broker an initial start lead
             
-            pben = subprocess.Popen(BENIGN_CMD, cwd=pub_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-            self.processes.append(pben)
-            
-            patt = subprocess.Popen(ATTACK_CMD, cwd=pub_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-            self.processes.append(patt)
+            pdyn = subprocess.Popen(DYN_PUB_CMD, cwd=pub_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            self.processes.append(pdyn)
             
         except Exception as e:
             self.q.put(f"[SYSTEM] Error starting processes: {e}")
@@ -109,12 +105,20 @@ class MQTTSecTUI:
             elif "SUSPENDED" in line and "Client" in line:
                 try:
                     cid = int([w for w in line.split() if w.isdigit()][0])
-                    if cid in self.clients: self.clients[cid] = "BANNED"
+                    if cid in self.clients: self.clients[cid]["status"] = "BANNED"
                 except: pass
             elif "reinstated" in line and "Client" in line:
                 try:
                     cid = int([w for w in line.split() if w.isdigit()][0])
-                    if cid in self.clients: self.clients[cid] = "OK"
+                    if cid in self.clients: self.clients[cid]["status"] = "OK"
+                except: pass
+            elif "[Dynamic]" in line and "is now" in line:
+                # Log line from dynamic publisher: "[Dynamic] Client {cid} is now {role}"
+                try:
+                    parts = line.split("Client")[1].split("is now")
+                    cid = int(parts[0].strip())
+                    role = parts[1].strip()
+                    if cid in self.clients: self.clients[cid]["role"] = min(role, key=len) if len(role) > 6 else role[:6]
                 except: pass
             elif "classification error" in line:
                 try: self.last_err = float(line.split(':')[-1].strip())
@@ -178,11 +182,13 @@ class MQTTSecTUI:
             row = 10 + (i % 5)
             col = 5 + (30 * (i // 5)) # 3 columns
             
-            c_type = "Attkr" if i >= 10 else "Benign"
-            status = self.clients[i]
+            c_type = self.clients[i]["role"]
+            status = self.clients[i]["status"]
             
             color = curses.color_pair(1) if status == "OK" else curses.color_pair(2)
-            c_type_color = curses.color_pair(2) if i >= 10 else curses.color_pair(1)
+            c_type_color = curses.color_pair(2) if "attack" in c_type.lower() else curses.color_pair(1)
+            if "inacti" in c_type.lower():
+                c_type_color = curses.color_pair(3)
             
             self.stdscr.addstr(row, col, f"[{i:2d}] ")
             self.stdscr.attron(c_type_color)
