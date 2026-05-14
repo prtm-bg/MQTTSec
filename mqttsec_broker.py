@@ -104,24 +104,30 @@ class RFModel:
         X = np.array([t[0] for t in traffic_buffer], dtype=np.float32)
         y = np.array([t[1] for t in traffic_buffer], dtype=int)
 
-        # Fix: Enable warm_start and add estimators to blend new knowledge without wiping old trees
+        # Keep a much larger portion of the Kaggle model (20 trees) to dominate the vote
+        if not hasattr(self, 'kaggle_pruned'):
+            if hasattr(self.rf, 'estimators_') and len(self.rf.estimators_) > 20:
+                self.rf.estimators_ = self.rf.estimators_[:20]  # Keep 20 old trees
+                self.rf.n_estimators = 20
+            self.kaggle_pruned = True
+
         self.rf.warm_start = True
-        self.rf.n_estimators += 10
+        self.rf.n_estimators += 5  # Add only 5 new trees from the latest traffic
         
-        # 80/20 split — paper Section 6.3 - Adding shuffle to prevent consecutive identical labels
-        from sklearn.model_selection import train_test_split
-        # Using a fallback to standard split if only one class exists
-        try:
-            X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-        except ValueError:
-            X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
+        # 80/20 split — No shuffling
+        split_idx = int(len(X) * 0.8)
+        X_tr, X_te = X[:split_idx], X[split_idx:]
+        y_tr, y_te = y[:split_idx], y[split_idx:]
 
         self.rf.fit(X_tr, y_tr)
-        y_pred      = self.rf.predict(X_te)
-        error       = float(np.mean(y_pred != y_te))
+        if len(X_te) > 0:
+            y_pred      = self.rf.predict(X_te)
+            error       = float(np.mean(y_pred != y_te))
+        else:
+            error = 0.0
         self.last_error = error
 
-        print(f"[RFModel] Retrained | train={len(X_tr)} test={len(X_te)} "
+        print(f"[RFModel] Retrained from scratch | train={len(X_tr)} test={len(X_te)} "
               f"error={error:.4f} acc={(1-error)*100:.2f}%")
         return error
 

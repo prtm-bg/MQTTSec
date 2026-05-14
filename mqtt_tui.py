@@ -12,7 +12,8 @@ import os
 import sys
 
 BROKER_CMD = ["python3", "-u", "mqttsec_broker.py"]
-DYN_PUB_CMD = ["python3", "-u", "dynamic_publisher.py", "--broker", "127.0.0.1"]
+BENIGN_PUB_CMD = ["python3", "-u", "benign_publisher.py", "--broker", "127.0.0.1"]
+ATTACK_PUB_CMD = ["python3", "-u", "attacker_publisher.py", "--broker", "127.0.0.1"]
 
 class MQTTSecTUI:
     def __init__(self, stdscr):
@@ -71,8 +72,11 @@ class MQTTSecTUI:
             
             time.sleep(2) # Give broker an initial start lead
             
-            pdyn = subprocess.Popen(DYN_PUB_CMD, cwd=pub_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-            self.processes.append(pdyn)
+            pbenign = subprocess.Popen(BENIGN_PUB_CMD, cwd=pub_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            self.processes.append(pbenign)
+            
+            pattack = subprocess.Popen(ATTACK_PUB_CMD, cwd=pub_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            self.processes.append(pattack)
             
         except Exception as e:
             self.q.put(f"[SYSTEM] Error starting processes: {e}")

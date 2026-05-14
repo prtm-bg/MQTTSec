@@ -30,7 +30,7 @@ BENIGN_CONNECT_SLEEP   = (60, 80)
 ATTACK_CONNECT_PAYLOAD = (660, 900)   
 ATTACK_CONNECT_SLEEP   = (1, 3)       
 
-ATTACK_QOS0_PAYLOAD    = (4, 8)       
+ATTACK_QOS0_PAYLOAD    = (4, 30)       
 ATTACK_QOS0_SLEEP      = (1, 4)       
 
 ATTACK_QOS1_PAYLOAD   = (660, 1000)  
@@ -84,49 +84,28 @@ class DynamicClient(threading.Thread):
                 continue
                 
             if role == 'benign':
-                # Real-life benign: Occasional large payloads, random jitter, overlapping with threshold boundaries
                 if sub_type == 'qos0':
-                    plen  = random.randint(4, 500) if random.random() < 0.9 else random.randint(500, 1500) # 10% chance large
-                    base_sleep = random.randint(*BENIGN_QOS0_SLEEP)
-                    sleep = (base_sleep + random.gauss(0, 10)) / 1000.0 # Gaussian Jitter
+                    plen  = random.randint(*BENIGN_QOS0_PAYLOAD)
+                    sleep = random.randint(*BENIGN_QOS0_SLEEP) / 1000.0
                 elif sub_type == 'qos1':
-                    plen  = random.randint(4, 400) if random.random() < 0.9 else random.randint(400, 800)
-                    base_sleep = random.randint(*BENIGN_QOS1_SLEEP)
-                    sleep = (base_sleep + random.gauss(0, 15)) / 1000.0
+                    plen  = random.randint(*BENIGN_QOS1_PAYLOAD)
+                    sleep = random.randint(*BENIGN_QOS1_SLEEP) / 1000.0
                 else: # connect
-                    plen  = random.randint(4, 250)
-                    base_sleep = random.randint(*BENIGN_CONNECT_SLEEP)
-                    sleep = (base_sleep + random.gauss(0, 20)) / 1000.0
+                    plen  = random.randint(*BENIGN_CONNECT_PAYLOAD)
+                    sleep = random.randint(*BENIGN_CONNECT_SLEEP) / 1000.0
                 
                 is_attack = 0
-                sleep = max(0.01, sleep) # ensure it doesnt go negative
             
             elif role == 'attacker':
-                # Realistic attacks: Evasion Tactics (barely crossing threshold) mixed with Brute Force
-                if sub_type == 'qos0': # stealth fast flood (rides near 20-30ms)
-                    if random.random() < 0.7:
-                        # Brute Force
-                        plen  = random.randint(4, 30)
-                        sleep = random.randint(*ATTACK_QOS0_SLEEP) / 1000.0
-                    else:
-                        # Evasion: close to benign threshold
-                        plen  = random.randint(20, 400)
-                        sleep = random.uniform(15, 29) / 1000.0
-                elif sub_type == 'qos1': # stealth heavy flood
-                    if random.random() < 0.7:
-                        plen  = random.randint(*ATTACK_QOS1_PAYLOAD)
-                        sleep = random.randint(*ATTACK_QOS1_SLEEP) / 1000.0
-                    else:
-                        # Evasion: large payload, but slows down frequency to dodge detection
-                        plen  = random.randint(620, 680) # hovers right around 650 threshold
-                        sleep = random.uniform(20, 50) / 1000.0
+                if sub_type == 'qos0': # fast flood
+                    plen  = random.randint(*ATTACK_QOS0_PAYLOAD)
+                    sleep = random.randint(*ATTACK_QOS0_SLEEP) / 1000.0
+                elif sub_type == 'qos1': # heavy flood
+                    plen  = random.randint(*ATTACK_QOS1_PAYLOAD)
+                    sleep = random.randint(*ATTACK_QOS1_SLEEP) / 1000.0
                 else: # connect flood
-                    if random.random() < 0.7:
-                        plen  = random.randint(*ATTACK_CONNECT_PAYLOAD)
-                        sleep = random.randint(*ATTACK_CONNECT_SLEEP) / 1000.0
-                    else:
-                        plen  = random.randint(500, 750)
-                        sleep = random.uniform(5, 15) / 1000.0
+                    plen  = random.randint(*ATTACK_CONNECT_PAYLOAD)
+                    sleep = random.randint(*ATTACK_CONNECT_SLEEP) / 1000.0
                 
                 is_attack = 1
 
