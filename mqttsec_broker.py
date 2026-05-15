@@ -22,7 +22,7 @@ import paho.mqtt.client as mqtt
 from sklearn.ensemble import RandomForestClassifier
 
 # PAPER TABLE 2 - CONSTANTS
-THETA1_MIN   = 8       # bytes  — min safe payload length
+THETA1_MIN   = 45      # bytes  — updated from 8 to account for JSON overhead
 THETA1_MAX   = 650     # bytes  — max safe payload length
 THETA2_MIN   = 5.0     # ms     — min safe time delta
 THETA2_MAX   = 55.0    # ms     — max safe time delta

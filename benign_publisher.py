@@ -94,15 +94,18 @@ def run_benign_publisher(broker_ip, broker_port=1883):
 
                 if msg_type == 'qos0':
                     plen  = random.randint(*QOS0_PAYLOAD_BYTES)
-                    sleep = random.randint(*QOS0_SLEEP_MS) / 1000.0
+                    base_sleep = random.randint(*QOS0_SLEEP_MS)
+                    sleep = (base_sleep + abs(random.gauss(5, 15))) / 1000.0
 
                 elif msg_type == 'qos1':
                     plen  = random.randint(*QOS1_PAYLOAD_BYTES)
-                    sleep = random.randint(*QOS1_SLEEP_MS) / 1000.0
+                    base_sleep = random.randint(*QOS1_SLEEP_MS)
+                    sleep = (base_sleep + abs(random.gauss(5, 20))) / 1000.0
 
                 else:   # connect
                     plen  = random.randint(*CONNECT_PAYLOAD_BYTES)
-                    sleep = random.randint(*CONNECT_SLEEP_MS) / 1000.0
+                    base_sleep = random.randint(*CONNECT_SLEEP_MS)
+                    sleep = (base_sleep + abs(random.gauss(5, 20))) / 1000.0
 
                 topic   = f"mqttsec/c{cid}/{msg_type}"
                 payload = make_payload(cid, plen, is_attack=0)
