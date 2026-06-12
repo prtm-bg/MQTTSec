@@ -11,17 +11,20 @@ import time
 import os
 import sys
 
-BROKER_CMD = ["python3", "-u", "mqttsec_broker.py"]
+# Remove global BROKER_CMD so we make it class-level
 BENIGN_PUB_CMD = ["python3", "-u", "benign_publisher.py", "--broker", "127.0.0.1"]
 ATTACK_PUB_CMD = ["python3", "-u", "attacker_publisher.py", "--broker", "127.0.0.1"]
 
 class MQTTSecTUI:
-    def __init__(self, stdscr):
+    def __init__(self, stdscr, max_ep=60, retrain_int=15):
         self.stdscr = stdscr
         self.q = queue.Queue()
         
         self.epoch = 0
-        self.max_epochs = 60
+        self.max_epochs = max_ep
+        self.retrain_int = retrain_int
+        self.broker_cmd = ["python3", "-u", "mqttsec_broker.py", "--epochs", str(max_ep), "--retrain", str(retrain_int)]
+        
         self.episode = 0
         self.max_episodes = 10
         self.last_err = 0.0
@@ -67,7 +70,7 @@ class MQTTSecTUI:
             pub_dir = os.path.join(home, "mqtt-publishers")
             
         try:
-            pb = subprocess.Popen(BROKER_CMD, cwd=broker_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            pb = subprocess.Popen(self.broker_cmd, cwd=broker_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             self.processes.append(pb)
             
             time.sleep(2) # Give broker an initial start lead
@@ -243,13 +246,23 @@ class MQTTSecTUI:
             self.stdscr.refresh()
             self.stop_processes()
 
-def run_tui(stdscr):
-    app = MQTTSecTUI(stdscr)
+def run_tui(stdscr, epochs, retrain):
+    app = MQTTSecTUI(stdscr, max_ep=epochs, retrain_int=retrain)
     app.run()
 
 if __name__ == "__main__":
+    print("==========================================")
+    print(" Configure MQTTSec Test Environment")
+    print("==========================================")
+    
+    e_str = input("Enter Total Epochs (default 60): ").strip()
+    r_str = input("Enter Retrain Interval (default 15): ").strip()
+    
+    total_epochs = int(e_str) if e_str.isdigit() else 60
+    retrain_int  = int(r_str) if r_str.isdigit() else 15
+    
     try:
-        curses.wrapper(run_tui)
+        curses.wrapper(run_tui, total_epochs, retrain_int)
     except KeyboardInterrupt:
         pass
     print("\nDone. MQTTSec monitor successfully terminated.")

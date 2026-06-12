@@ -1,6 +1,8 @@
 paper/
 RFModel/mqttset/
 
+memo.md
+
 train70.csv
 
 # Python bytecode and caches

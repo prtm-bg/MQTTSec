@@ -28,12 +28,18 @@ THETA2_MIN   = 5.0     # ms     — min safe time delta
 THETA2_MAX   = 55.0    # ms     — max safe time delta
 THETA2_AVG   = 30.0    # ms     — average threshold used for QoS0 (Eq.6)
 
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("--epochs", type=int, default=60)
+parser.add_argument("--retrain", type=int, default=15)
+args, _ = parser.parse_known_args()
+
 TAU_EPOCH    = 18.0    # return threshold for epoch-level decision (Eq.9)
 EPSILON_R    = 0.1     # residual epsilon (Table 2)
 GAMMA        = 0.9     # discount factor (Eq.10)
 N_EPISODES   = 10      # episodes per epoch (Table 2)
-N_EPOCHS     = 60      # total epochs to run (author instruction)
-RETRAIN_INT  = 15      # epochs between ML retraining (Table 2 / author)
+N_EPOCHS     = args.epochs      # total epochs to run (author instruction)
+RETRAIN_INT  = args.retrain     # epochs between ML retraining (Table 2 / author)
 BAN_DURATION = 2       # suspension duration in epochs (Δ)
 NUM_CLIENTS  = 15      # 10 benign + 5 attacker
 
@@ -620,8 +626,16 @@ class MQTTSecMonitor:
         axes[1].plot(epochs, self.rl_env.epoch_error_history,
                      'r-',  linewidth=2, label='ML error')
         axes[1].set_xlabel('Epoch',  fontweight='bold')
-        axes[1].set_ylabel('Value',  fontweight='bold')
+        axes[1].set_ylabel('ML Model Error',  fontweight='bold')
         axes[1].set_title('ε and ML Error over Epochs')
+
+        # Mark retrain epochs with vertical lines
+        for ep in epochs:
+            if ep % RETRAIN_INT == 0:
+                # Add label only once to avoid duplicate legend entries
+                label = 'Retrain Epoch' if ep == RETRAIN_INT else ""
+                axes[1].axvline(x=ep, color='green', linestyle=':', alpha=0.5, label=label)
+
         axes[1].legend()
 
         plt.tight_layout()
