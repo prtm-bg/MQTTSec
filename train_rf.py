@@ -1,5 +1,4 @@
 # train_rf.py
-# Run this ONCE offline (on your laptop or RPi 5) before the experiment.
 # Requires: MQTT_dataset.csv from https://www.kaggle.com/datasets/cnrieiit/mqttset
 #
 # Usage:
