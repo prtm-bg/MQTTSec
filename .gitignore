@@ -1,3 +1,10 @@
+paper/
+RFModel/mqttset/
+
+memo.md
+
+train70.csv
+
 # Python bytecode and caches
 __pycache__/
 *.py[cod]
