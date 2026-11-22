@@ -73,33 +73,46 @@ class RFModel:
         self.last_error = 0.0
         print(f"[RFModel] Loaded from {model_path}")
 
+    @staticmethod
+    def features(payload_len, timedelta_ms):
+        """
+        Feature vector for the RF: [mqtt.len, tcp.time_delta].
+        MQTTset's tcp.time_delta is in seconds, so the broker's millisecond
+        time delta is converted before it reaches the model.
+        """
+        return [float(payload_len), float(timedelta_ms) / 1000.0]
+
     def predict(self, payload_len, timedelta_ms):
         """
         Classify one message.
         Returns state: 0 = benign, 1 = attack
         Features match Figure 8: [mqtt.len, tcp.time_delta]
         """
-        X = np.array([[float(payload_len), float(timedelta_ms)]])
+        X = np.array([self.features(payload_len, timedelta_ms)])
         return int(self.rf.predict(X)[0])
 
-    def compute_error(self, features_list, labels_list):
+    def compute_error(self, window_msgs):
         """
-        Compute classification error on this episode's batch.
-        Called at end of each episode → feeds into epsilon update.
-        features_list : [[payload_len, timedelta_ms], ...]
-        labels_list   : [0/1, ...]  (ground truth from publisher)
+        Classification error Υn of one episode (Eq. 12).
+        window_msgs: [(client_id, payload_len, timedelta_ms, true_label), ...]
+                     every message the broker received during the episode.
+        The error is measured per client and averaged over clients, so the
+        attackers' much higher message rate does not swamp the benign clients.
         """
-        if not features_list:
+        if not window_msgs:
             return self.last_error
-        X      = np.array(features_list, dtype=np.float32)
-        y_true = np.array(labels_list,   dtype=int)
-        y_pred = self.rf.predict(X)
-        self.last_error = float(np.mean(y_pred != y_true))
+        cids   = np.array([m[0] for m in window_msgs])
+        X      = np.array([self.features(m[1], m[2]) for m in window_msgs])
+        y_true = np.array([m[3] for m in window_msgs], dtype=int)
+        wrong  = self.rf.predict(X) != y_true
+        self.last_error = float(np.mean([wrong[cids == c].mean()
+                                         for c in np.unique(cids)]))
         return self.last_error
 
     def retrain(self, traffic_buffer):
         """
-        Retrain RF on accumulated (features, label) pairs.
+        Retrain RF on the traffic collected since the last retrain (Sec. 6.3.2).
+        traffic_buffer: [(payload_len, timedelta_ms, true_label), ...]
         Called every RETRAIN_INT epochs.
         Returns new classification error on held-out 20%.
         """
@@ -107,20 +120,20 @@ class RFModel:
             print("[RFModel] Not enough data for retraining — skipping.")
             return self.last_error
 
-        X = np.array([t[0] for t in traffic_buffer], dtype=np.float32)
-        y = np.array([t[1] for t in traffic_buffer], dtype=int)
+        X = np.array([self.features(t[0], t[1]) for t in traffic_buffer])
+        y = np.array([t[2] for t in traffic_buffer], dtype=int)
 
-        # Keep a much larger portion of the Kaggle model (20 trees) to dominate the vote
-        if not hasattr(self, 'kaggle_pruned'):
-            if hasattr(self.rf, 'estimators_') and len(self.rf.estimators_) > 20:
-                self.rf.estimators_ = self.rf.estimators_[:20]  # Keep 20 old trees
-                self.rf.n_estimators = 20
-            self.kaggle_pruned = True
+        # With only two features, max_features='sqrt' would pick one feature at
+        # random per split; consider both. min_samples_leaf keeps single
+        # network-jitter outliers from becoming their own leaves.
+        self.rf = RandomForestClassifier(
+            n_estimators=100, max_features=None, min_samples_leaf=20,
+            random_state=42, n_jobs=-1
+        )
 
-        self.rf.warm_start = True
-        self.rf.n_estimators += 5  # Add only 5 new trees from the latest traffic
-        
-        # 80/20 split — No shuffling
+        # 80/20 split (Sec. 6.3), shuffled so the test set covers the window
+        idx = np.random.permutation(len(X))
+        X, y = X[idx], y[idx]
         split_idx = int(len(X) * 0.8)
         X_tr, X_te = X[:split_idx], X[split_idx:]
         y_tr, y_te = y[:split_idx], y[split_idx:]
@@ -133,7 +146,7 @@ class RFModel:
             error = 0.0
         self.last_error = error
 
-        print(f"[RFModel] Retrained from scratch | train={len(X_tr)} test={len(X_te)} "
+        print(f"[RFModel] Retrained on recent traffic | train={len(X_tr)} test={len(X_te)} "
               f"error={error:.4f} acc={(1-error)*100:.2f}%")
         return error
 
@@ -176,11 +189,11 @@ class RLenv:
         self.epoch_count         = 0
         self.episodes_per_epoch  = N_EPISODES
 
-        # Classification error (updated each episode from real RF)
+        # Classification error Υn (updated each episode from real RF)
         self.last_classification_error = 0.0
 
         # Traffic buffer for periodic retraining
-        # Stores ([payload_len, timedelta_ms], true_label) tuples
+        # Stores (payload_len, timedelta_ms, true_label) tuples since last retrain
         self.traffic_buffer = []
 
         # History for plotting
@@ -303,11 +316,13 @@ class RLenv:
 
     # EPISODE LOOP
 
-    def run_episode(self, clients):
+    def run_episode(self, clients, window_msgs=None):
         """
         Process one episode.
         clients: list of dicts with keys:
             id, msg_type, timedelta_ms, payload_len, true_label
+        window_msgs: every message received during the episode window as
+            (client_id, payload_len, timedelta_ms, true_label); used for Υn.
         Returns: (rewards list, epoch_results dict or None)
         """
         ep_num = self.episode_count + 1
@@ -318,8 +333,6 @@ class RLenv:
 
         actions         = []
         active_ids      = []
-        episode_feats   = []
-        episode_labels  = []
 
         for client in clients:
             cid        = client['id']
@@ -327,6 +340,11 @@ class RLenv:
             td_ms      = client['timedelta_ms']
             plen       = client['payload_len']
             true_label = client.get('true_label', 0)
+
+            # The broker still sees a suspended client's traffic, so it is
+            # part of the data the RF is retrained on (one sample per client
+            # per episode).
+            self.traffic_buffer.append((float(plen), float(td_ms), true_label))
 
             if self.is_suspended(cid):
                 print(f"    Client {cid:2d} SUSPENDED — skipped.")
@@ -338,11 +356,6 @@ class RLenv:
 
             print(f"    Client {cid:2d} | {msg_type:8s} | "
                   f"len={plen:5d}B | td={td_ms:7.1f}ms | RF={ml_label}")
-
-            # Accumulate for error calculation and retraining
-            episode_feats.append([float(plen), float(td_ms)])
-            episode_labels.append(true_label)
-            self.traffic_buffer.append(([float(plen), float(td_ms)], true_label))
 
             # Apply episode-level policy
             action = self.check_msg_type(msg_type, td_ms, plen, ml_state=ml_state)
@@ -358,11 +371,12 @@ class RLenv:
             self.reward_buffer[cid].append(r)
             self.return1[cid] += r
 
-        # Update classification error from real RF (author instruction 1)
-        if episode_feats:
-            self.last_classification_error = self.model.compute_error(
-                episode_feats, episode_labels
-            )
+        # Classification error Υn of this episode, from the real RF
+        if window_msgs is None:
+            window_msgs = [(c['id'], c['payload_len'], c['timedelta_ms'],
+                            c.get('true_label', 0)) for c in clients]
+        if window_msgs:
+            self.last_classification_error = self.model.compute_error(window_msgs)
             print(f"\n    RF classification error this episode: "
                   f"{self.last_classification_error:.4f}")
 
@@ -470,6 +484,7 @@ class MQTTSecMonitor:
         self.rl_env    = rl_env
         self.last_seen = {}    # client_id → last message timestamp (s)
         self.pending   = {}    # client_id → latest client dict
+        self.window_msgs = []  # every message in the current episode window
         self.lock      = threading.Lock()
         self.running   = True
 
@@ -541,6 +556,8 @@ class MQTTSecMonitor:
                 td_ms = THETA2_MAX   # first message — assume safe
             self.last_seen[cid] = now
 
+            self.window_msgs.append((cid, payload_len, td_ms, true_label))
+
             # Keep the most recent message from each client for this episode
             self.pending[cid] = {
                 'id':           cid,
@@ -559,22 +576,26 @@ class MQTTSecMonitor:
         """
         action_map = {1: 'accept', 2: 'warn', 0: 'decline'}
 
+        # Windows are scheduled on a fixed clock so processing time does not
+        # stretch epochs (one epoch = N_EPISODES × EPISODE_WINDOW_SEC).
+        next_close = time.monotonic()
         while self.running:
-            time.sleep(EPISODE_WINDOW_SEC)
+            next_close += EPISODE_WINDOW_SEC
+            time.sleep(max(0.0, next_close - time.monotonic()))
 
             with self.lock:
-                if not self.pending:
-                    continue
-                clients      = list(self.pending.values())
-                self.pending = {}
+                clients          = list(self.pending.values())
+                window_msgs      = self.window_msgs
+                self.pending     = {}
+                self.window_msgs = []
 
             if not clients:
                 continue
 
             print(f"\n[Monitor] Episode window closed — "
-                  f"{len(clients)} clients collected")
+                  f"{len(clients)} clients, {len(window_msgs)} messages")
 
-            rewards, epoch_results = self.rl_env.run_episode(clients)
+            rewards, epoch_results = self.rl_env.run_episode(clients, window_msgs)
 
             # Log every client's outcome this episode
             wall = time.strftime("%H:%M:%S")
@@ -619,30 +640,32 @@ class MQTTSecMonitor:
 
         fig, axes = plt.subplots(1, 2, figsize=(12, 4))
 
-        # Plot 1 — accumulated returns per client
-        axes[0].bar(range(NUM_CLIENTS), self.rl_env.return1, color='steelblue')
-        axes[0].set_xlabel('Client ID',     fontweight='bold')
-        axes[0].set_ylabel('Return',        fontweight='bold')
+        # (a) Cumulative return of each client
+        axes[0].bar(range(NUM_CLIENTS), self.rl_env.return1, color='#5b7ba3')
+        axes[0].set_xlabel('Client ID', fontweight='bold', fontsize=12)
+        axes[0].set_ylabel('Return',    fontweight='bold', fontsize=12)
         axes[0].set_xticks(range(NUM_CLIENTS))
-        axes[0].set_title('Accumulated Returns')
 
-        # Plot 2 — epsilon over epochs
+        # (b) ML model error and the ε derived from it (Eq. 12)
         axes[1].plot(epochs, self.rl_env.epoch_epsilon_history,
-                     'b--', linewidth=2, label='ε')
+                     linestyle='--', color='#1f3b73', linewidth=1.2, label='ε')
         axes[1].plot(epochs, self.rl_env.epoch_error_history,
-                     'r-',  linewidth=2, label='ML error')
-        axes[1].set_xlabel('Epoch',  fontweight='bold')
-        axes[1].set_ylabel('ML Model Error',  fontweight='bold')
-        axes[1].set_title('ε and ML Error over Epochs')
+                     linestyle='-', color='#8b1a1a', linewidth=1.2, label='ML error')
+        axes[1].set_xlabel('Epoch',          fontweight='bold', fontsize=12)
+        axes[1].set_ylabel('ML Model Error', fontweight='bold', fontsize=12)
 
         # Mark retrain epochs with vertical lines
         for ep in epochs:
             if ep % RETRAIN_INT == 0:
                 # Add label only once to avoid duplicate legend entries
                 label = 'Retrain Epoch' if ep == RETRAIN_INT else ""
-                axes[1].axvline(x=ep, color='green', linestyle=':', alpha=0.5, label=label)
+                axes[1].axvline(x=ep, color='#1f3b73', linestyle=':',
+                                linewidth=0.8, alpha=0.7, label=label)
 
-        axes[1].legend()
+        for ax in axes:
+            for tick in ax.get_xticklabels() + ax.get_yticklabels():
+                tick.set_fontweight('bold')
+        axes[1].legend(loc='upper right', prop={'weight': 'bold'})
 
         plt.tight_layout()
         plt.savefig('mqttsec_progress.png', dpi=150)

@@ -78,7 +78,9 @@ class MQTTSecTUI:
             pbenign = subprocess.Popen(BENIGN_PUB_CMD, cwd=pub_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             self.processes.append(pbenign)
             
-            pattack = subprocess.Popen(ATTACK_PUB_CMD, cwd=pub_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            # Attack campaigns change tactic once per retrain interval
+            attack_cmd = ATTACK_PUB_CMD + ["--campaign-epochs", str(self.retrain_int)]
+            pattack = subprocess.Popen(attack_cmd, cwd=pub_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             self.processes.append(pattack)
             
         except Exception as e:
