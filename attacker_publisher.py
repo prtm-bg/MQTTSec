@@ -1,7 +1,14 @@
 # attacker_publisher.py
 # Runs on RPi 4 #2.
 # Simulates 5 attacker clients (IDs 10-14).
-# Cycles through the 3 attack types from the paper (Section 4.1).
+# Each attacker uses one of the 3 attack types from the paper (Section 4.2).
+#
+# Every client runs in its own thread with its own MQTT connection and its
+# own send loop, so the time delta the broker measures for a client is that
+# client's real sending interval (Sec. 7: "each running as a separate client
+# process"). Previously all five IDs were sent round-robin from one loop, so
+# each ID reached the broker only once per full cycle (~40 ms). That hid the
+# QoS 0 fast-flooding client (12) behind the 30 ms θ2avg threshold.
 #
 # Usage:
 #   pip3 install paho-mqtt --break-system-packages
@@ -18,6 +25,7 @@ import random
 import json
 import argparse
 import socket
+import threading
 
 # Configuration
 ATTACK_CLIENT_IDS = list(range(10, 15))   # clients 10-14 are attackers
@@ -49,6 +57,8 @@ ATTACK_TYPE_MAP = {
     14: 'qos1'
 }
 
+BASE_SEED = 2
+
 
 def create_mqtt_client(client_id):
     """
@@ -77,73 +87,104 @@ def make_payload(cid, target_bytes, is_attack=1):
     }).encode()
 
 
-def run_attacker_publisher(broker_ip, broker_port=1883):
-    client = create_mqtt_client("attacker_publisher_rpi4_2")
-    try:
-        client.connect(broker_ip, broker_port, keepalive=60)
-    except ConnectionRefusedError:
-        print(f"[Attacker] Connection refused by {broker_ip}:{broker_port}")
-        print("[Attacker] Ensure Mosquitto is running and listening on 1883.")
-        return
-    except socket.gaierror as e:
-        print(f"[Attacker] Invalid broker address '{broker_ip}': {e}")
-        return
-    except OSError as e:
-        print(f"[Attacker] Could not connect to {broker_ip}:{broker_port} ({e})")
-        return
+def next_message(attack_type, rng):
+    """Return (payload_len, sleep_seconds) for one message of this attack type."""
+    if attack_type == 'connect':
+        # Attack 1: CONNECT flooding
+        plen       = rng.randint(*CONNECT_FLOOD_PAYLOAD)
+        base_sleep = rng.randint(*CONNECT_FLOOD_SLEEP)
+        sleep      = (base_sleep + abs(rng.gauss(2, 8))) / 1000.0
+    elif attack_type == 'qos0':
+        # Attack 2: Fast flooding
+        plen       = rng.randint(*FAST_FLOOD_PAYLOAD)
+        base_sleep = rng.randint(*FAST_FLOOD_SLEEP)
+        sleep      = (base_sleep + abs(rng.gauss(2, 5))) / 1000.0
+    else:
+        # Attack 3: Heavy flooding (qos1)
+        plen       = rng.randint(*HEAVY_FLOOD_PAYLOAD)
+        base_sleep = rng.randint(*HEAVY_FLOOD_SLEEP)
+        sleep      = (base_sleep + abs(rng.gauss(2, 8))) / 1000.0
+    return plen, sleep
 
-    client.loop_start()
-    print(f"[Attacker] Connected to {broker_ip}:{broker_port}")
-    print(f"[Attacker] Simulating attack clients {ATTACK_CLIENT_IDS}")
-    print(f"[Attacker] Attack types: {ATTACK_TYPE_MAP}")
 
-    try:
-        while True:
-            for cid in ATTACK_CLIENT_IDS:
-                attack_type = ATTACK_TYPE_MAP[cid]
+class AttackerClient(threading.Thread):
+    """One attacker client: its own MQTT connection and its own send loop."""
 
-                if attack_type == 'connect':
-                    # Attack 1: CONNECT flooding
-                    plen  = random.randint(*CONNECT_FLOOD_PAYLOAD)
-                    base_sleep = random.randint(*CONNECT_FLOOD_SLEEP)
-                    sleep = (base_sleep + abs(random.gauss(2, 8))) / 1000.0
-                    msg_t = 'connect'
+    def __init__(self, cid, broker_ip, broker_port, stop_event, verbose):
+        super().__init__(daemon=True, name=f"attacker_c{cid}")
+        self.cid         = cid
+        self.attack_type = ATTACK_TYPE_MAP[cid]
+        self.broker_ip   = broker_ip
+        self.broker_port = broker_port
+        self.stop_event  = stop_event
+        self.verbose     = verbose
+        self.rng         = random.Random(BASE_SEED * 100 + cid)
+        self.client      = create_mqtt_client(f"attacker_c{cid}_rpi4_2")
 
-                elif attack_type == 'qos0':
-                    # Attack 2: Fast flooding
-                    plen  = random.randint(*FAST_FLOOD_PAYLOAD)
-                    base_sleep = random.randint(*FAST_FLOOD_SLEEP)
-                    sleep = (base_sleep + abs(random.gauss(2, 5))) / 1000.0
-                    msg_t = 'qos0'
+    def run(self):
+        try:
+            self.client.connect(self.broker_ip, self.broker_port, keepalive=60)
+        except ConnectionRefusedError:
+            print(f"[Attacker] c{self.cid} connection refused by "
+                  f"{self.broker_ip}:{self.broker_port}")
+            return
+        except socket.gaierror as e:
+            print(f"[Attacker] c{self.cid} invalid broker address "
+                  f"'{self.broker_ip}': {e}")
+            return
+        except OSError as e:
+            print(f"[Attacker] c{self.cid} could not connect to "
+                  f"{self.broker_ip}:{self.broker_port} ({e})")
+            return
 
-                else:
-                    # Attack 3: Heavy flooding (qos1)
-                    plen  = random.randint(*HEAVY_FLOOD_PAYLOAD)
-                    base_sleep = random.randint(*HEAVY_FLOOD_SLEEP)
-                    sleep = (base_sleep + abs(random.gauss(2, 8))) / 1000.0
-                    msg_t = 'qos1'
+        self.client.loop_start()
+        msg_t = self.attack_type
+        topic = f"mqttsec/c{self.cid}/{msg_t}"
+        qos   = 0 if msg_t == 'qos0' else 1
+        # Single write (text + newline) so lines from different threads don't merge
+        print(f"[Attacker] c{self.cid:2d} connected | attack={msg_t}\n", end="")
 
-                topic   = f"mqttsec/c{cid}/{msg_t}"
-                payload = make_payload(cid, plen, is_attack=1)
-                qos     = 0 if msg_t == 'qos0' else 1
-
+        try:
+            while not self.stop_event.is_set():
+                plen, sleep = next_message(msg_t, self.rng)
+                payload = make_payload(self.cid, plen, is_attack=1)
                 try:
-                    result = client.publish(topic, payload, qos=qos)
-                    if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                        print(f"[Attacker] c{cid:2d} | {msg_t:8s} | "
+                    result = self.client.publish(topic, payload, qos=qos)
+                    if result.rc != mqtt.MQTT_ERR_SUCCESS:
+                        print(f"[Attacker] c{self.cid} publish failed: {result.rc}")
+                    elif self.verbose:
+                        print(f"[Attacker] c{self.cid:2d} | {msg_t:8s} | "
                               f"{len(payload):5d}B | sleep={sleep*1000:.0f}ms")
-                    else:
-                        print(f"[Attacker] c{cid} publish failed: {result.rc}")
                 except Exception as e:
-                    print(f"[Attacker] c{cid} error: {e}")
+                    print(f"[Attacker] c{self.cid} error: {e}")
 
-                time.sleep(sleep)
+                self.stop_event.wait(sleep)
+        finally:
+            self.client.loop_stop()
+            self.client.disconnect()
 
+
+def run_attacker_publisher(broker_ip, broker_port=1883, verbose=False):
+    stop_event = threading.Event()
+    clients = [AttackerClient(cid, broker_ip, broker_port, stop_event, verbose)
+               for cid in ATTACK_CLIENT_IDS]
+
+    print(f"[Attacker] Starting attack clients {ATTACK_CLIENT_IDS} "
+          f"(one connection and send loop per client)")
+    print(f"[Attacker] Attack types: {ATTACK_TYPE_MAP}")
+    for c in clients:
+        c.start()
+
+    try:
+        while any(c.is_alive() for c in clients):
+            time.sleep(0.5)
     except KeyboardInterrupt:
-        print("\n[Attacker] Stopped.")
+        print("\n[Attacker] Stopping...")
     finally:
-        client.loop_stop()
-        client.disconnect()
+        stop_event.set()
+        for c in clients:
+            c.join(timeout=2.0)
+        print("[Attacker] Stopped.")
 
 
 if __name__ == '__main__':
@@ -152,7 +193,8 @@ if __name__ == '__main__':
                         help='Broker IP (RPi 5). Default: 192.168.1.100')
     parser.add_argument('--port',   default=1883, type=int,
                         help='Broker port. Default: 1883')
+    parser.add_argument('--verbose', action='store_true',
+                        help='Print every published message')
     args = parser.parse_args()
 
-    random.seed(2)
-    run_attacker_publisher(args.broker, args.port)
+    run_attacker_publisher(args.broker, args.port, args.verbose)

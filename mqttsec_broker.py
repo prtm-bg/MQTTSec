@@ -187,6 +187,7 @@ class RLenv:
         self.epoch_epsilon_history = []
         self.epoch_error_history   = []
         self.suspension_history    = {}   # epoch → list of suspended client IDs
+        self.last_active_ids       = []   # client IDs processed in the last episode
 
     # STATE
 
@@ -349,6 +350,8 @@ class RLenv:
             active_ids.append(cid)
 
         rewards = self.reward_return(actions)
+        # Client IDs that rewards[] lines up with (suspended clients are skipped)
+        self.last_active_ids = list(active_ids)
 
         # Store rewards per client
         for cid, r in zip(active_ids, rewards):
@@ -575,7 +578,9 @@ class MQTTSecMonitor:
 
             # Log every client's outcome this episode
             wall = time.strftime("%H:%M:%S")
-            for client, reward in zip(clients, rewards):
+            by_id = {c['id']: c for c in clients}
+            for cid_active, reward in zip(self.rl_env.last_active_ids, rewards):
+                client = by_id[cid_active]
                 cid  = client['id']
                 plen = client['payload_len']
                 td   = client['timedelta_ms']
@@ -618,6 +623,7 @@ class MQTTSecMonitor:
         axes[0].bar(range(NUM_CLIENTS), self.rl_env.return1, color='steelblue')
         axes[0].set_xlabel('Client ID',     fontweight='bold')
         axes[0].set_ylabel('Return',        fontweight='bold')
+        axes[0].set_xticks(range(NUM_CLIENTS))
         axes[0].set_title('Accumulated Returns')
 
         # Plot 2 — epsilon over epochs
