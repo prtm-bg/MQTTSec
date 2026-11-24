@@ -38,8 +38,8 @@ TAU_EPOCH    = 18.0    # return threshold for epoch-level decision (Eq.9)
 EPSILON_R    = 0.1     # residual epsilon (Table 2)
 GAMMA        = 0.9     # discount factor (Eq.10)
 N_EPISODES   = 10      # episodes per epoch (Table 2)
-N_EPOCHS     = args.epochs      # total epochs to run (author instruction)
-RETRAIN_INT  = args.retrain     # epochs between ML retraining (Table 2 / author)
+N_EPOCHS     = args.epochs      # total epochs to run
+RETRAIN_INT  = args.retrain     # epochs between ML retraining (Table 2)
 BAN_DURATION = 2       # suspension duration in epochs (Δ)
 NUM_CLIENTS  = 15      # 10 benign + 5 attacker
 
@@ -154,7 +154,7 @@ class RFModel:
         return self.last_error
 
 
-# RL ENVIRONMENT (complete - author's code + all fixes)
+# RL ENVIRONMENT
 class RLenv:
     """
     Full MQTTSec RL environment.
@@ -408,7 +408,7 @@ class RLenv:
               f"{self.last_classification_error:.4f}")
         print(f"  {'#'*55}")
 
-        # Author instruction 3: retrain every 15 epochs
+        # Retrain every RETRAIN_INT epochs (Table 2: E = 15)
         if self.epoch_count % RETRAIN_INT == 0:
             print(f"\n  [RETRAIN] Epoch {self.epoch_count} "
                   f"— retraining RF on {len(self.traffic_buffer)} samples...")
